@@ -2,23 +2,39 @@ import express from "express";
 import dotenv from "dotenv";
 import { ChatGoogle } from "@langchain/google";
 import { TavilySearch } from "@langchain/tavily";
-import { createAgent } from "langchain";
+import { createAgent, tool } from "langchain";
+import { z } from "zod";
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-const tool = new TavilySearch({
+const tool1 = new TavilySearch({
   maxResults: 5,
   topic: "general",
 });
+
+// custom tool
+const tool2 = tool(
+  ({ a, b }) => {
+    return `addition of ${a} and ${b} is ${a + b}`;
+  },
+  {
+    name: "addition_tool",
+    description: "use this tool to add two numbers together",
+    schema: z.object({
+      a: z.number(),
+      b: z.number(),
+    }),
+  },
+);
 
 const model = new ChatGoogle("gemini-3.6-flash");
 
 const agent = createAgent({
   model,
-  tools: [tool],
+  tools: [tool1, tool2],
 });
 
 app.post("/chat", async (req, res) => {
@@ -31,7 +47,7 @@ app.post("/chat", async (req, res) => {
     const result = await agent.invoke({
       messages: [{ role: "user", content: prompt }],
     });
-
+    console.dir(result.messages, { depth: null });
     const lastMessage = result.messages[result.messages.length - 1];
     return res.json({ response: lastMessage.content });
   } catch (err) {
