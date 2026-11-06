@@ -4,6 +4,7 @@ import { ChatGoogle } from "@langchain/google";
 import { TavilySearch } from "@langchain/tavily";
 import { createAgent, tool } from "langchain";
 import { z } from "zod";
+import nodemailer from "nodemailer";
 
 dotenv.config();
 
@@ -30,11 +31,44 @@ const tool2 = tool(
   },
 );
 
+// Email transporter
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GOOGLE_EMAIL,
+    pass: process.env.GOOGLE_APP_PASSWORD,
+  },
+});
+
+// Custom email tool
+const tool3 = tool(
+  async ({ to, subject, body }) => {
+    const info = await transporter.sendMail({
+      from: process.env.GOOGLE_EMAIL,
+      to,
+      subject,
+      text: body,
+    });
+
+    return `Email sent successfully to ${to}. Message ID: ${info.messageId}`;
+  },
+  {
+    name: "send_email",
+    description:
+      "Use this tool to send an email to a recipient. Requires the recipient email address, subject, and email body. Use this tool whenever the user explicitly asks you to send an email.",
+    schema: z.object({
+      to: z.string().email().describe("Recipient email address"),
+      subject: z.string().min(1).describe("Subject of the email"),
+      body: z.string().min(1).describe("Content of the email"),
+    }),
+  },
+);
+
 const model = new ChatGoogle("gemini-3.6-flash");
 
 const agent = createAgent({
   model,
-  tools: [tool1, tool2],
+  tools: [tool1, tool2, tool3],
 });
 
 app.post("/chat", async (req, res) => {
