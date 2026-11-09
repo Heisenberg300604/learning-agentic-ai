@@ -5,6 +5,9 @@ import { TavilySearch } from "@langchain/tavily";
 import { createAgent, tool } from "langchain";
 import { z } from "zod";
 import nodemailer from "nodemailer";
+import { ToolNode } from "@langchain/langgraph/prebuilt";
+import { StateGraph, StateSchema } from "@langchain/langgraph";
+import { MessagesAnnotation } from "@langchain/langgraph";
 
 dotenv.config();
 
@@ -64,30 +67,47 @@ const tool3 = tool(
   },
 );
 
-const model = new ChatGoogle("gemini-3.6-flash");
+const tools = [tool1, tool2, tool3];
+const model = new ChatGoogle("gemini-3.6-flash").bindTools(tools);
 
-const agent = createAgent({
-  model,
-  tools: [tool1, tool2, tool3],
-});
+const toolNode = new ToolNode(tools);
+
+const agent = async (state) => {
+  const result = await model.invoke(state.messages);
+
+  return {
+    messages: [result],
+  };
+};
+
+const shouldContinue = (state) => {
+  if (state.messages[state.messages.length - 1].tool_calls.length > 0) {
+    return "tool_node";
+  } else {
+    return "__end__";
+  }
+};
+
+const graph = new StateGraph(MessagesAnnotation)
+  .addNode("agent", agent)
+  .addNode("tool_node", toolNode)
+  .addEdge("__start__", "agent")
+  .addConditionalEdges("agent", shouldContinue)
+  .addEdge("tool_node", "agent")
+  .compile();
 
 app.post("/chat", async (req, res) => {
-  try {
-    const { prompt } = req.body;
-    if (!prompt) {
-      return res.status(400).json({ error: "prompt is required" });
-    }
-
-    const result = await agent.invoke({
-      messages: [{ role: "user", content: prompt }],
-    });
-    console.dir(result.messages, { depth: null });
-    const lastMessage = result.messages[result.messages.length - 1];
-    return res.json({ response: lastMessage.content });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: "Something went wrong" });
-  }
+  const { prompt } = req.body;
+  const result = await graph.invoke({
+    messages: [
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+  });
+  console.log(result.messages);
+  return res.json(result.messages[result.messages.length - 1].content);
 });
 
 const port = process.env.PORT || 5000;
